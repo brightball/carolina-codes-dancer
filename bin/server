@@ -1,0 +1,32 @@
+#!/usr/bin/env perl
+# Dual-stack PSGI listener for the Dancer2 app. HTTP::Server::PSGI's default
+# IO::Socket::INET rejects host "::" (Invalid argument).
+use strict;
+use warnings;
+use FindBin;
+use lib "$FindBin::Bin/../local/lib/perl5";
+use lib "$FindBin::Bin/../lib";
+use IO::Socket::IP;
+use HTTP::Server::PSGI;
+use Plack::Util;
+
+package CarolinaCodes::PSGI;
+use parent 'HTTP::Server::PSGI';
+
+sub setup_listener {
+    my $self = shift;
+    $self->{listen_sock} = IO::Socket::IP->new(
+        LocalHost => CarolinaCodes::Dancer::listen_host(),
+        LocalPort => $self->{port},
+        Listen    => 16,
+        ReuseAddr => 1,
+        V6Only    => 0,
+        Proto     => 'tcp',
+    ) or die "listen :$self->{port}: $!";
+}
+
+package main;
+my $port = $ENV{PORT} // 4017;
+my $app  = Plack::Util::load_psgi("$FindBin::Bin/../app.psgi");
+warn "carolina-codes-dancer listening on :" . $port . "\n";
+CarolinaCodes::PSGI->new(host => '::', port => $port)->run($app);

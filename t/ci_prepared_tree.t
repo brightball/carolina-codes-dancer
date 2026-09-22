@@ -144,6 +144,17 @@ expect(defined $cfg, 'packed archive includes .git/config for gitleaks');
 expect(($cfg || '') !~ /s3cret-token/,                   'pack redacts the job token from git remote');
 expect(($cfg || '') =~ m{gitea\.example\.test/org/repo}, 'pack keeps a tokenless origin URL');
 
+{
+    local $ENV{TMPDIR} = $tree;
+    delete local $ENV{PREPARED_TREE_ARCHIVE};
+    my $inside_status = system($^X, $helper, 'pack');
+    expect($inside_status == 0, 'pack succeeds when TMPDIR is the workspace');
+    opendir my $tmp, '/tmp' or die "opendir /tmp: $!";
+    my @packed = grep {/^prepared-tree-.*\.tar\.gz$/} readdir $tmp;
+    closedir $tmp or die "closedir /tmp: $!";
+    unlink map {"/tmp/$_"} @packed;
+}
+
 my $unpacked = File::Spec->catdir($scratch, 'unpacked');
 make_path($unpacked);
 {

@@ -33,8 +33,11 @@ sub archive_path {
     return $arg                        if defined $arg && $arg ne '';
     return $ENV{PREPARED_TREE_ARCHIVE} if $ENV{PREPARED_TREE_ARCHIVE};
     return $default_archive            if $default_archive;
-    my ($fh, $path) = tempfile('prepared-tree-XXXXXX', SUFFIX => '.tar.gz', UNLINK => 0);
-    close $fh;
+
+    # Runners often set TMPDIR to the workspace. A tar written there is read
+    # while it is still growing ("file changed as we read it").
+    my ($fh, $path) = tempfile('prepared-tree-XXXXXX', SUFFIX => '.tar.gz', DIR => '/tmp', UNLINK => 0);
+    close $fh or die "close $path: $!";
     $default_archive = $path;
     return $default_archive;
 }
@@ -51,10 +54,12 @@ sub redact_git_remote {
 
 sub cmd_pack {
     my ($archive) = @_;
-    workspace();
+    my $dir = workspace();
     redact_git_remote();
     $archive = archive_path($archive);
-    system('tar', '-czf', $archive, '.') == 0 or die "tar pack $archive failed\n";
+    my ($exclude) = $archive =~ m{([^/]+)$};
+    system('tar', '-czf', $archive, '--exclude', $exclude, '-C', $dir, '.') == 0
+        or die "tar pack $archive failed\n";
     return $archive;
 }
 

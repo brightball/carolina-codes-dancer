@@ -1,0 +1,10 @@
+title = "carolina-codes-dancer"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "gitignored CPAN local-lib is not first-party source"
+paths = [
+  '''(?:^|/)local/''',
+]

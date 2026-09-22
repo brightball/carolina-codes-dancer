@@ -1,6 +1,6 @@
 local/
+.git
 *.log
-*.ERR
-*.bak
 *.tdy
-
+*.bak
+*.ERR

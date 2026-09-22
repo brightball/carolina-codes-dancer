@@ -1,0 +1,11 @@
+# Advisories with no upstream fixed version that do not apply to this
+# read-only JSON API. cpan-audit still runs; these IDs are explicit.
+#
+# CVE-2026-13577 / CPANSA-Dancer2-2026-13577: Dancer2 session-id CSPRNG
+# fallback when Math::Random::ISAAC::XS and Crypt::URandom are missing.
+# This app does not enable Dancer2 sessions.
+CVE-2026-13577
+#
+# CVE-2026-7381 / CPANSA-Plack-2026-7381: Plack::Middleware::XSendfile
+# client-controlled path rewriting. This app does not load that middleware.
+CVE-2026-7381

@@ -4,7 +4,8 @@ use warnings;
 use Dancer2;
 use DBI;
 use HTTP::Tiny;
-use JSON ();
+use JSON        ();
+use POSIX       ();
 use URI::Escape qw(uri_unescape);
 
 our $VERSION = '0.2.0';
@@ -30,17 +31,13 @@ our @ENDPOINTS = (
     { method => 'GET', path => '/v1/sponsors/:year/:slug', query => [] },
 );
 
-my $SPEAKER_COLS =
-    'slug, first_name, last_name, name, tagline, bio, company, location, '
-  . 'photo_path, twitter_url, linkedin_url, website_url, github_url, featured';
-my $YEAR_SPONSOR_COLS =
-    'slug, name, website, logo_path, description, blurb, tier, featured, year, '
-  . 'twitter_url, linkedin_url, youtube_url, instagram_url, facebook_url';
-my $SPONSOR_COLS =
-    'slug, name, website, logo_path, description, twitter_url, linkedin_url, '
-  . 'youtube_url, instagram_url, facebook_url';
-my $TALK_COLS =
-    'slug, title, description, format, youtube_id, year, speaker_slug, languages, topics';
+my $SPEAKER_COLS = 'slug, first_name, last_name, name, tagline, bio, company, location, '
+    . 'photo_path, twitter_url, linkedin_url, website_url, github_url, featured';
+my $YEAR_SPONSOR_COLS = 'slug, name, website, logo_path, description, blurb, tier, featured, year, '
+    . 'twitter_url, linkedin_url, youtube_url, instagram_url, facebook_url';
+my $SPONSOR_COLS = 'slug, name, website, logo_path, description, twitter_url, linkedin_url, '
+    . 'youtube_url, instagram_url, facebook_url';
+my $TALK_COLS = 'slug, title, description, format, youtube_id, year, speaker_slug, languages, topics';
 
 our $DBH;
 our $SQL_COUNT     = 0;
@@ -68,22 +65,28 @@ sub reset_counts {
     $CONNECT_COUNT = 0;
 }
 
+# libpq treats a connect_timeout below 2 as 2. Two seconds still fails inside the 3s bound.
+sub apply_connect_timeout {
+    my ($dsn) = @_;
+    return $dsn if $dsn =~ /(?:^|;)connect_timeout=/;
+    return $dsn . ';connect_timeout=2';
+}
+
 sub parse_db_url {
     my ($url) = @_;
     $url ||= 'postgres://postgres:postgres@127.0.0.1:5432/carolina_dev';
     if ($url =~ m{^dbi:}) {
         $url .= ';sslmode=disable' unless $url =~ /sslmode=/;
-        return ($url, undef, undef);
+        return (apply_connect_timeout($url), undef, undef);
     }
-    if (
-        $url =~ m{^postgres(?:ql)?://
+    if ($url =~ m{^postgres(?:ql)?://
                   (?:([^:@/]+)(?::([^@/]*))?@)?
                   ([^:/]+)
                   (?::(\d+))?
                   /([^?]+)
                   (?:\?(.*))?
                  }x
-      )
+        )
     {
         my ($user, $pass, $host, $port, $db, $query) = ($1, $2, $3, $4, $5, $6);
         $user = defined $user ? uri_unescape($user) : 'postgres';
@@ -97,9 +100,9 @@ sub parse_db_url {
             $sslmode = $q{sslmode} if $q{sslmode};
         }
         $dsn .= ";sslmode=$sslmode";
-        return ($dsn, $user, $pass);
+        return (apply_connect_timeout($dsn), $user, $pass);
     }
-    return ("dbi:Pg:dbname=$url;sslmode=disable", undef, undef);
+    return (apply_connect_timeout("dbi:Pg:dbname=$url;sslmode=disable"), undef, undef);
 }
 
 sub open_connection {
@@ -109,8 +112,7 @@ sub open_connection {
     my ($dsn, $user, $pass) = parse_db_url($url);
     return DBI->connect(
         $dsn, $user, $pass,
-        {
-            RaiseError     => 1,
+        {   RaiseError     => 1,
             AutoCommit     => 1,
             pg_enable_utf8 => 1,
             PrintError     => 0,
@@ -119,17 +121,31 @@ sub open_connection {
 }
 
 sub dbh {
-    if ($DBH && $DBH->ping) {
-        return $DBH;
-    }
+    return $DBH if $DBH;
     $DBH = open_connection();
     return $DBH;
+}
+
+# Ping only after a failed query, to tell a dead connection from bad SQL.
+sub connection_alive {
+    my ($dbh) = @_;
+    return 0 unless $dbh;
+    my $alive = eval { $dbh->ping };
+    return $alive ? 1 : 0;
 }
 
 sub db_query {
     my ($sql, @bind) = @_;
     $SQL_COUNT++;
     return $QUERY_FN->($sql, \@bind) if $QUERY_FN;
+    my $rows = eval { dbh()->selectall_arrayref($sql, { Slice => {} }, @bind) };
+    my $err  = $@;
+    return $rows if !$err;
+    if (!$DBH || connection_alive($DBH)) {
+        die $err;
+    }
+    eval { $DBH->{InactiveDestroy} = 1 };
+    $DBH = undef;
     return dbh()->selectall_arrayref($sql, { Slice => {} }, @bind);
 }
 
@@ -143,7 +159,7 @@ sub as_string_array {
     my ($value) = @_;
     return [] unless defined $value;
     if (ref $value eq 'ARRAY') {
-        return [ grep { length } map {"$_"} @$value ];
+        return [ grep {length} map {"$_"} @$value ];
     }
     my $stripped = $value;
     $stripped =~ s/^\s+|\s+$//g;
@@ -151,12 +167,19 @@ sub as_string_array {
     if ($stripped =~ /^\{(.*)\}$/) {
         $stripped = $1;
     }
-    return [ grep { length } map { s/^"|"$//g; $_ } split /,/, $stripped ];
+    return [
+        grep {length} map {
+            my $item = $_;
+            $item =~ s/^"|"$//g;
+            $item;
+        } split /,/,
+        $stripped
+    ];
 }
 
 sub clean {
     my ($row) = @_;
-    return undef unless $row;
+    return unless $row;
     my %out;
     for my $key (keys %$row) {
         my $v = $row->{$key};
@@ -210,19 +233,13 @@ sub talks_for {
 
 sub talk_years {
     my ($slug) = @_;
-    my $rows = db_query(
-        'SELECT DISTINCT year FROM v1_talks WHERE speaker_slug = ? ORDER BY year DESC',
-        $slug
-    );
+    my $rows = db_query('SELECT DISTINCT year FROM v1_talks WHERE speaker_slug = ? ORDER BY year DESC', $slug);
     return [ map { 0 + $_->{year} } @$rows ];
 }
 
 sub sponsor_years {
     my ($slug) = @_;
-    my $rows = db_query(
-        'SELECT DISTINCT year FROM v1_sponsorships WHERE sponsor_slug = ? ORDER BY year DESC',
-        $slug
-    );
+    my $rows = db_query('SELECT DISTINCT year FROM v1_sponsorships WHERE sponsor_slug = ? ORDER BY year DESC', $slug);
     return [ map { 0 + $_->{year} } @$rows ];
 }
 
@@ -240,8 +257,8 @@ sub list_speakers {
     }
     my $rows = db_query(
         "SELECT $SPEAKER_COLS FROM v1_speakers "
-          . 'WHERE slug IN (SELECT speaker_slug FROM v1_talks WHERE year = ?) '
-          . 'ORDER BY last_name, first_name',
+            . 'WHERE slug IN (SELECT speaker_slug FROM v1_talks WHERE year = ?) '
+            . 'ORDER BY last_name, first_name',
         $year
     );
     return attach_year_tags([ map { clean($_) } @$rows ], $year);
@@ -268,10 +285,7 @@ sub attach_year_tags {
 
 sub load_talks_for_year {
     my ($year) = @_;
-    my $rows = db_query(
-        "SELECT $TALK_COLS FROM v1_talks WHERE year = ? ORDER BY speaker_slug, year DESC",
-        $year
-    );
+    my $rows = db_query("SELECT $TALK_COLS FROM v1_talks WHERE year = ? ORDER BY speaker_slug, year DESC", $year);
     my %by;
     for my $row (@$rows) {
         my $talk = clean($row);
@@ -322,6 +336,30 @@ sub register_payload {
     };
 }
 
+# Fork the one register attempt so a stalled CMS cannot delay the listener.
+sub start_register_with_elixir {
+    my ($port) = @_;
+    return if $REGISTERED;
+    my $url   = $ENV{CAROLINA_URL};
+    my $token = $ENV{POLYGLOT_REGISTER_TOKEN};
+    return unless defined $url && length $url && defined $token && length $token;
+
+    my $pid = fork();
+    if (!defined $pid) {
+        warn "register fork: $!\n";
+        register_with_elixir($port);
+        return;
+    }
+    if ($pid == 0) {
+        my $ok = eval { register_with_elixir($port); 1 };
+        warn $@ if !$ok && $@;
+        POSIX::_exit(0);
+    }
+    $REGISTERED = 1;
+    $SIG{CHLD} = 'IGNORE';
+    return;
+}
+
 sub register_with_elixir {
     my ($port) = @_;
     $port //= $ENV{PORT} // '4017';
@@ -335,14 +373,14 @@ sub register_with_elixir {
     my $http = HTTP::Tiny->new(timeout => 5);
     my $resp = $http->post(
         "$url/internal/api-endpoints/register",
-        {
-            headers => {
+        {   headers => {
                 Authorization  => "Bearer $token",
                 'Content-Type' => 'application/json',
             },
             content => $JSON->encode(register_payload($base)),
         }
     );
+
     if ($resp->{success}) {
         warn "registered with elixir: $resp->{status}\n";
     }
@@ -417,10 +455,7 @@ get '/v1/sponsors' => sub {
     my $raw = query_parameters->get('year');
     my $rows;
     if (defined $raw && length $raw) {
-        $rows = db_query(
-            "SELECT $YEAR_SPONSOR_COLS FROM v1_year_sponsors WHERE year = ? ORDER BY name",
-            0 + $raw
-        );
+        $rows = db_query("SELECT $YEAR_SPONSOR_COLS FROM v1_year_sponsors WHERE year = ? ORDER BY name", 0 + $raw);
     }
     else {
         $rows = db_query("SELECT $SPONSOR_COLS FROM v1_sponsors ORDER BY name");
@@ -436,10 +471,7 @@ get '/v1/sponsors/:year/:slug' => sub {
         return { error => 'not_found' };
     }
     $year = 0 + $year;
-    my $row = db_query_one(
-        "SELECT $YEAR_SPONSOR_COLS FROM v1_year_sponsors WHERE year = ? AND slug = ?",
-        $year, $slug
-    );
+    my $row = db_query_one("SELECT $YEAR_SPONSOR_COLS FROM v1_year_sponsors WHERE year = ? AND slug = ?", $year, $slug);
     $row = clean($row);
     unless ($row) {
         status 404;

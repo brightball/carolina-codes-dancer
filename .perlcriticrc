@@ -1,0 +1,27 @@
+# Fail-closed static analysis for first-party Perl. Gentle (severity 5)
+# plus security-relevant policies that default below that floor.
+severity = 5
+verbose  = 8
+color    = 0
+only     = 0
+
+[InputOutput::ProhibitTwoArgOpen]
+severity = 5
+
+[InputOutput::ProhibitBacktickOperators]
+severity = 5
+
+[BuiltinFunctions::ProhibitStringyEval]
+severity = 5
+
+[Modules::ProhibitEvilModules]
+severity = 5
+
+[InputOutput::ProhibitBarewordFileHandles]
+severity = 5
+
+[TestingAndDebugging::RequireUseStrict]
+severity = 5
+
+[TestingAndDebugging::RequireUseWarnings]
+severity = 5

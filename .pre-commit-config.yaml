@@ -1,0 +1,36 @@
+# Local pre-commit hooks. Emergency escape:
+# SKIP=local-tests,perlcritic,cpan-audit,gitleaks,perltidy git commit
+# Install once: make hooks   (or: pre-commit install)
+repos:
+  - repo: local
+    hooks:
+      - id: local-tests
+        name: local tests
+        language: system
+        entry: make test
+        pass_filenames: false
+        always_run: true
+      - id: perlcritic
+        name: perlcritic
+        language: system
+        entry: make perlcritic
+        pass_filenames: false
+        always_run: true
+      - id: cpan-audit
+        name: cpan-audit
+        language: system
+        entry: make audit
+        pass_filenames: false
+        always_run: true
+      - id: gitleaks
+        name: gitleaks
+        language: system
+        entry: make gitleaks
+        pass_filenames: false
+        always_run: true
+      - id: perltidy
+        name: perltidy
+        language: system
+        entry: make perltidy
+        pass_filenames: false
+        always_run: true

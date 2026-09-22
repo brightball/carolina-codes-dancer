@@ -13,20 +13,32 @@ use Plack::Util;
 package CarolinaCodes::PSGI;
 use parent 'HTTP::Server::PSGI';
 
-sub setup_listener {
-    my $self = shift;
-    $self->{listen_sock} = IO::Socket::IP->new(
-        LocalHost => CarolinaCodes::Dancer::listen_host(),
-        LocalPort => $self->{port},
+sub _socket {
+    my (%args) = @_;
+    return IO::Socket::IP->new(
+        LocalPort => $args{port},
+        LocalHost => $args{host},
         Listen    => 16,
         ReuseAddr => 1,
-        V6Only    => 0,
         Proto     => 'tcp',
-    ) or die "listen :$self->{port}: $!";
+        ($args{host} eq '::' ? (V6Only => 0) : ()),
+    );
+}
+
+sub setup_listener {
+    my $self = shift;
+    my $port = $self->{port};
+    my $sock = _socket(host => CarolinaCodes::Dancer::listen_host(), port => $port);
+
+    # IPv4-only stacks (rootless Docker) reject "::" with EINVAL. Fly has IPv6.
+    $sock ||= _socket(host => '0.0.0.0', port => $port);
+    $sock or die "listen :$port: $!";
+    $self->{listen_sock} = $sock;
+    warn "carolina-codes-dancer listening on :$port\n";
+    return;
 }
 
 package main;
 my $port = $ENV{PORT} // 4017;
 my $app  = Plack::Util::load_psgi("$FindBin::Bin/../app.psgi");
-warn "carolina-codes-dancer listening on :" . $port . "\n";
 CarolinaCodes::PSGI->new(host => '::', port => $port)->run($app);

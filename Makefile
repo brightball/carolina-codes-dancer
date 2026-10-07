@@ -11,6 +11,7 @@ test:
 	perl -Ilocal/lib/perl5 t/boot.t
 	perl -Ilocal/lib/perl5 t/gate_wiring.t
 	perl -Ilocal/lib/perl5 t/ci_prepared_tree.t
+	perl -Ilocal/lib/perl5 t/readme_versions.t
 
 perlcritic:
 	perlcritic --profile .perlcriticrc $(PERL_SOURCES)
